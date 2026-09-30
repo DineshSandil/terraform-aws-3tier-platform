@@ -1,0 +1,156 @@
+name: "Terraform Multi-Environment Deployment"
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "**.tf"
+      - "**.tfvars"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment to deploy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: "Terraform action to execute"
+        required: true
+        type: choice
+        default: "apply"
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-dev:
+    name: "Deploy Development"
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+
+      - name: "Configure AWS Credentials via OIDC"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-south-1
+          audience: sts.amazonaws.com
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.4"
+
+      - name: "Terraform Init"
+        working-directory: environments/dev
+        run: terraform init
+
+      - name: "Terraform Plan"
+        working-directory: environments/dev
+        run: terraform plan -out=tfplan
+
+      - name: "Terraform Apply"
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply'
+        working-directory: environments/dev
+        run: terraform apply -auto-approve tfplan
+
+      - name: "Terraform Destroy"
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+        working-directory: environments/dev
+        run: terraform destroy -auto-approve
+
+  deploy-staging:
+    name: "Deploy Staging"
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+
+      - name: "Configure AWS Credentials via OIDC"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-south-1
+          audience: sts.amazonaws.com
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.4"
+
+      - name: "Terraform Init"
+        working-directory: environments/staging
+        run: terraform init
+
+      - name: "Terraform Plan"
+        working-directory: environments/staging
+        run: terraform plan -out=tfplan
+
+      - name: "Terraform Apply"
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply'
+        working-directory: environments/staging
+        run: terraform apply -auto-approve tfplan
+
+      - name: "Terraform Destroy"
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+        working-directory: environments/staging
+        run: terraform destroy -auto-approve
+
+  deploy-prod:
+    name: "Deploy Production (Gated Approval)"
+    needs: [deploy-staging]
+    if: (github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod')
+    runs-on: ubuntu-latest
+    # Requires manual environment reviewer approval in GitHub Settings -> Environments -> production
+    environment: production
+
+    steps:
+      - name: "Checkout Code"
+        uses: actions/checkout@v4
+
+      - name: "Configure AWS Credentials via OIDC"
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-south-1
+          audience: sts.amazonaws.com
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.4"
+
+      - name: "Terraform Init"
+        working-directory: environments/prod
+        run: terraform init
+
+      - name: "Terraform Plan"
+        working-directory: environments/prod
+        run: terraform plan -out=tfplan
+
+      - name: "Terraform Apply"
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.action == 'apply'
+        working-directory: environments/prod
+        run: terraform apply -auto-approve tfplan
+
+      - name: "Terraform Destroy"
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+        working-directory: environments/prod
+        run: terraform destroy -auto-approve

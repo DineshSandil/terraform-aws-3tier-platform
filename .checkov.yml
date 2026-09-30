@@ -1,0 +1,15 @@
+# Checkov Static Code Analysis Configuration
+directory:
+  - .
+framework:
+  - terraform
+output:
+  - cli
+  - sarif
+output-file-path: console,results.sarif
+soft-fail: false
+skip-path:
+  - .terraform
+  - scripts/github-actions-oidc.tf
+compact: true
+quiet: false

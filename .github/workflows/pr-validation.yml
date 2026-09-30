@@ -1,0 +1,105 @@
+name: "Terraform PR Validation & Security Scan"
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "**.tf"
+      - "**.tfvars"
+      - ".github/workflows/**"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: "Terraform Format, Validate & Security"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.4"
+
+      - name: "Check Terraform Formatting"
+        run: terraform fmt -check -recursive
+
+      - name: "Validate Dev Module"
+        working-directory: environments/dev
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: "Validate Staging Module"
+        working-directory: environments/staging
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: "Validate Prod Module"
+        working-directory: environments/prod
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: "Run Checkov Security Scan"
+        uses: bridgecrewio/checkov-action@master
+        with:
+          framework: terraform
+          soft_fail: false
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+
+      - name: "Run tfsec Security Scan"
+        uses: aquasecurity/tfsec-pr-commenter-action@v1.2.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+  plan:
+    name: "Terraform Plan (Dev/Staging)"
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    strategy:
+      matrix:
+        environment: [dev, staging]
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "Configure AWS Credentials via OIDC (No Static Keys)"
+        uses: aws-actions/configure-aws-credentials@v4
+        if: ${{ env.AWS_ROLE_ARN != '' }}
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ap-south-1
+          audience: sts.amazonaws.com
+
+      - name: "Setup Terraform"
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.4"
+
+      - name: "Terraform Init"
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform init -backend=false
+
+      - name: "Terraform Plan"
+        id: plan
+        working-directory: environments/${{ matrix.environment }}
+        run: |
+          terraform plan -no-color -out=tfplan || exit 1
+        continue-on-error: false
